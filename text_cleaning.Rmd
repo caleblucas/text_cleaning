@@ -1,0 +1,443 @@
+---
+title: "Text Cleaning in R"
+author: "Caleb Lucas"
+date: "7/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, comment = NA)
+```
+
+## Introduction
+
+Social scientists increasingly analyze text, such as political speeches and social media posts, to understand important phenomena. Unlike many other data sources, text is usually only available in its raw form though and requires careful cleaning and processing to properly analyze it. Recent research demonstrates these steps can measurably affect results, but they are rarely discussed in research papers. This workshop will equip participants to prepare messy text for analysis.
+
+## Libraries
+
+```{r}
+
+# install.packages(c())
+
+library(textclean)
+library(tidytext)
+library(SnowballC)
+library(tidyverse)
+library(textstem)
+
+```
+
+## Cleaning Steps
+
+#### Working with Strings
+
+[`stringr` functions](https://stringr.tidyverse.org/reference/index.html)
+[`stringr` cheat sheet](https://edrub.in/CheatSheets/cheatSheetStringr.pdf)
+
+```{r}
+
+string <- "A character string"
+
+str_remove(string = string, pattern = "c")
+str_remove_all(string = string, pattern = "c")
+
+str_replace(string = string, pattern = "c", replacement = "k")
+str_replace_all(string = string, pattern = "c", replacement = "k")
+
+```
+
+#### Some example text
+
+```{r}
+
+text_example <- "Michigan State University will continue providing much-needed assistance to students who are children of migrant farmworkers with a USA Department of Education grant renewal of more than $2 million. MSU’s College Assistance Migrant Program Scholars Initiative has served more than 1,000 eligible migrant and seasonal farmworker students during its 20 years. The CAMP initiative identifies, recruits, admits and enrolls migrant and seasonal farmworker students and provides them academic, social and financial support to complete their first year of college.."
+
+```
+
+#### Fix representational issues
+
+- Uppercase and lowercase characters are different to computers - need to standardize them so the same word is seen the same.
+
+```{r}
+
+stringr::str_to_lower("This has LOTS OF CAPS")
+stringr::str_to_upper("this has no caps")
+
+```
+
+- Contractions are fixed relatively easily. More advanced solutions (custom typically) exist as needed.
+
+```{r}
+
+textclean::replace_contraction(c("Michigan State isn't going to lose",
+                                 "What's your favorite programming language?",
+                                 "I'd love more tidyverse packages",
+                                 "She's going to win")
+                               )
+
+```
+
+- Corpora with many of the same abbreviations, or simply common ones, can be fixed/standarized.
+
+```{r}
+
+abbrevs <- c("MSU", 
+             "USA")
+
+names(abbrevs) <- c("Michigan State University", 
+                    "United States")
+
+abbrev_ex <- c("Michigan State University isn't going to lose",
+               "I just got into Michigan State University in the United States",
+               "MSU is a great school",
+               "Michigan State Universty is in the Unted States",
+               "The United States is big")
+```
+
+- The original text
+```{r}
+abbrev_ex
+```
+
+- The cleaned text
+```{r}
+stringr::str_replace_all(abbrev_ex, 
+                         pattern = abbrevs, 
+                         replacement = names(abbrevs)
+                         )
+```
+
+- Let's these steps together, but first *tokenize* the text, or split it into tokens - which are just units of the text that we will analyze. We typically use words, but we can tokenize text into sentences, paragraphs, n-grams (collections of words or sentences), etc.
+
+```{r}
+
+text_clean <- text_example %>%
+  # make the vector tidy
+  tibble::enframe(name = NULL) %>%
+  rename(text = value) %>%
+  # tokenize to words
+  tidytext::unnest_tokens(word, text) %>%
+  # make lowercase
+  mutate(word = stringr::str_to_lower(word)) %>%
+  # replace contractions
+  mutate(word = textclean::replace_contraction(word))
+
+```
+
+- Example: Make trigrams of words instead of tokenizing to single words
+
+```{r}
+
+text_example %>%
+  # make the vector tidy
+  tibble::enframe(name = NULL) %>%
+  rename(text = value) %>%
+  # tokenize to words
+  tidytext::unnest_tokens(ngram, text, token = "ngrams", n = 3) 
+
+```
+
+- Example: Make tokenize to sentences instead of single words
+
+```{r}
+
+text_example %>%
+  # make the vector tidy
+  tibble::enframe(name = NULL) %>%
+  rename(text = value) %>%
+  # tokenize to words
+  tidytext::unnest_tokens(sentence, text, token = "sentences") 
+
+```
+
+- Notice that tidytext did some heavy lifting for us in terms of stripping punctuation
+
+```{r}
+
+glimpse(text_clean)
+
+```
+
+#### Keep meaningful words. 
+
+We will drop 'stopwords' - or really common words - because they don't add meaning to the text and add lots of dimensions. Let's use the `stop_words` dataframe from `tidytext`, which combines lists of stopwords from a few sources (SMART, snowbsll, onix).
+
+```{r}
+
+data(stop_words)
+glimpse(stop_words)
+
+text_clean <- text_clean %>%
+  # drop stopwords
+  filter(!word %in% stop_words$word,
+         # drop "'" in the stopwrods list and drop those too
+         !word %in% str_remove_all(string = stop_words$word, pattern =  "'"),
+         # only keep words with characters between a and z in ASCII (
+         # - for English analysis, other languages would do this with other char sets)
+         str_detect(word, "[a-z]"))   %>%
+  # always consider further, custom stop words to drop as well
+  filter(!word %in% c("filter", "words"))
+
+```
+
+#### Remove messy characters/text. 
+
+- Some of these steps might not be necessary for our corpus, but I provide them for your reference.
+
+```{r}
+
+# whitespace matters. we only ever one a single space between words. str_squish does that for us
+stringr::str_squish(" this is   poorly  spaced ")
+
+# this is a regular expression to remove urls from text - we generally want those removed
+stringr::str_remove_all("https://caleblucas.com", "\\s?(f|ht)(tp)(s?)(://)([^\\.]*)[\\.|/](\\S*)")
+
+# we drop numbers typically and [[:digit:]] contains all of them for us. easy!
+stringr::str_remove_all("some 1 3 5 3483 numbers", "[[:digit:]]")
+
+# this removes hashtags (the hashtag word - you might not want this)
+stringr::str_remove_all("Lets go #MSU", "#[a-z,A-Z]*")
+
+# Remove references to users on social media - removes the username, so be careful - maybe you just want @ removed
+stringr::str_remove_all("hey @you", "@[a-z,A-Z]*")
+  
+# this removes all punctuation
+stringr::str_remove_all("Lots. of; punc!", "[[:punct:]]")
+
+# replacing is also easy
+stringr::str_replace_all("Michigan State is great", "Michigan State", "MSU")
+
+# lets combine it all together
+text_clean <- text_clean %>%
+  # we already made lowercase
+  mutate(word = stringr::str_to_lower(word)) %>%
+  # unnecessary spaces
+  mutate(word = stringr::str_squish(word)) %>%
+  mutate(word = stringr::str_remove_all(word, "\\s?(f|ht)(tp)(s?)(://)([^\\.]*)[\\.|/](\\S*)")) %>%
+  mutate(word = stringr::str_remove_all(word, "[[:digit:]]")) %>%
+  mutate(word = stringr::str_remove_all(word, "#[a-z,A-Z]*")) %>%
+  mutate(word = stringr::str_remove_all(word, "@[a-z,A-Z]*")) %>%
+  mutate(word = stringr::str_remove_all(word, "[[:punct:]]")) %>%
+  mutate(word = stringr::str_trim(word, side = "both")) %>%
+  na_if("") 
+
+```
+
+#### Analysis-specific steps
+
+- This is up to you to decide! It is important to consider what ad hoc cleaning steps your specific analysis might require
+
+## Processing
+
+#### Stemming
+
+```{r}
+
+SnowballC::wordStem(c("Running",
+                      "Shows",
+                      "Having",
+                      "Favors",
+                      "Ate",
+                      "Universal",
+                      "Dined"))
+
+text_clean <- text_clean %>%
+  mutate(word_stem = SnowballC::wordStem(word))
+
+```
+
+#### Lemmatization
+
+```{r}
+
+textstem::lemmatize_words(c("Running",
+                            "Shows",
+                            "Having",
+                            "Favors",
+                            "Ate",
+                            "Universal",
+                            "Dined"))
+
+text_clean <- text_clean %>%
+  mutate(word_lemma = textstem::lemmatize_words(word))
+
+```
+
+## Inspect
+
+```{r}
+
+text_clean %>%
+  drop_na() %>%
+  count(word_lemma, sort = TRUE) %>%
+  top_n(7) %>%
+  mutate(word_lemma = reorder(word_lemma, n)) %>%
+  ggplot(aes(x = word_lemma, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(x = "Unique Lemmas",
+       y = "Count",
+       title = "Count of Unique Lemmas") +
+  theme_bw()
+
+```
+
+
+## Donald Trump Tweets
+
+- Let's move to some more interesting data. I collected all tweets by Donald Trump between 2012-2020 (>40,000) so we could practice these steps and word with some bigger text data.
+
+```{r}
+
+trump_tweets <- read_csv("https://www.dropbox.com/s/s42m8c17xwr3lbh/realdonaldtrump_tweets.csv?dl=1")
+
+```
+
+- Tweets over time
+
+```{r}
+
+trump_tweets %>%
+  ggplot(aes(x = date)) +
+  geom_histogram(position = "identity", bins = 9*12,  show.legend = FALSE) +
+  geom_vline(xintercept=as.numeric(ISOdatetime(2017, 1, 20, 12, 0, 0))) +
+  ggtitle("Trump's Tweets Over Time Before/After Inauguration") +
+  theme_bw()
+
+```
+
+- Get word counts
+
+```{r}
+
+trump_counts <- trump_tweets %>%
+  tidytext::unnest_tokens(word, text) %>%
+  count(word, sort = TRUE)
+
+```
+
+- Plot word frequencies. What is going on?
+
+```{r}
+
+ggplot(trump_counts, aes(n)) +
+  geom_histogram(binwidth = 300) +
+  theme_bw()
+
+```
+
+- Plot top words
+
+```{r}
+
+trump_counts %>%
+  top_n(25) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(title = "Count of Unique Words in Trump's Tweets (2012-2020)") +
+  theme_bw()
+
+```
+
+- Look at bottom words. What do you notice?
+
+```{r}
+
+tail(trump_counts, n = 10)
+
+```
+
+- Find non-English characters.
+
+```{r}
+
+trump_non_eng <- trump_counts %>% 
+  mutate(word = stringr::str_remove_all(word, "[[:punct:]]")) %>%
+  filter(!str_detect(word, "[a-z]"),
+         !str_detect(word, "[0-9]"))
+
+```
+
+- We will do one cleaning step together. What happens when you drop stopwords from the earlier plot?
+
+```{r}
+
+data(stop_words)
+
+trump_counts %>%
+  filter(!word %in% stop_words$word,
+         !word %in% str_remove_all(string = stop_words$word, pattern =  "'"),
+         str_detect(word, "[a-z]")) %>%
+  top_n(25) %>%
+  mutate(word = reorder(word, n)) %>%
+  ggplot(aes(x = word, y = n)) +
+  geom_col() +
+  xlab(NULL) +
+  coord_flip() +
+  labs(title = "Count of Unique Words in Trump's Tweets (2012-2020)") +
+  theme_bw()
+
+```
+
+#### Thinking About Documents
+
+- What happened to the documents in the steps above? We threw all the words together and shook them up. The documents (tweets) were lost. Let's retain them in case we want to to a document-level analysis.
+
+```{r}
+
+trump_docs <- trump_tweets %>% 
+  filter(!str_detect(text, "^RT")) %>%
+  unnest_tokens(word, text, token = "tweets") %>%
+  filter(!word %in% stop_words$word,
+         !word %in% str_remove_all(string = stop_words$word, pattern =  "'"),
+         str_detect(word, "[a-z]"))
+
+```
+
+- Notice we preserved the documents now in our dataframe
+```{r}
+
+glimpse(trump_docs)
+
+```
+
+- You did it! This gets you from messy text data to a dataframe ready for analysis! Attend the workshop tomorrow to learn about some methods to do this.
+
+#### Next Steps
+
+```{r}
+
+# clean each tweet using your knowledge of social media, maybe with some analysis in mind
+
+```
+
+```{r}
+
+# tokenize the tweets in a different way (bigrams, etc) and plot/clean
+
+```
+
+```{r}
+
+# plot all the tweets in whatever way you think is useful and reassess - does anything stick out?
+# can you plot words before/after the 2016 election?
+# look at the most common/least common words - are they meaningful?
+# do some checks for characters that remain that ARENT letters used in English (Trump's tweet lang)
+# - do any remain? What non-Enlgish characters did we drop? Look backwards for this
+
+```
+
+
+
+```{r}
+
+# in a real scenario, you would run some models at this point and interpret the results with possible
+# further cleaning in mind (ie what words does your model think predict certain classes? etc)
+
+```
+
+
